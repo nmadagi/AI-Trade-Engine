@@ -430,24 +430,54 @@ def run_autohedge(
     then save the result with our custom risk wrapper.
     """
     trading_system = AutoFund(stocks)
-    tickers = ", ".join(stocks)
-    # Use the first stock name for a more natural sentence
-    stock = stocks[0] if stocks else tickers
 
+    # AutoFund expects a task per stock, so we iterate
+    stock = stocks[0]  # single-stock for now
+
+    # Clean + strict JSON-enforced task
     task = (
         f"Analyze {stock} and tell me whether to BUY, HOLD, or SELL. "
-        "You MUST return a valid JSON object with fields: "
-        "'thesis', 'quant_analysis', 'risk_assessment', and 'order'. "
-        "The 'order' field must itself be a JSON object with keys: "
-        "'side' ('buy' or 'sell'), 'quantity' (int), 'entry_price' (float), "
-        "'stop_loss' (float), 'take_profit' (float). "
-        f"We have ${allocation_usd:,.0f} allocation with a {strategy_type} style and "
-        f"risk level {risk_level}/10."
+        f"We have ${allocation_usd:,.0f} allocation with a {strategy_type} style "
+        f"and risk level {risk_level}/10. "
+        "You MUST return a VALID JSON object with EXACTLY these fields:\n\n"
+        "{\n"
+        '  "thesis": "...",\n'
+        '  "quant_analysis": {\n'
+        '      "technical_score": float,\n'
+        '      "volume_score": float,\n'
+        '      "trend_strength": float,\n'
+        '      "volatility": float,\n'
+        '      "probability_score": float,\n'
+        '      "key_levels": {\n'
+        '          "support": float,\n'
+        '          "resistance": float,\n'
+        '          "pivot": float\n'
+        "      }\n"
+        "  },\n"
+        '  "risk_assessment": {\n'
+        '      "position_size": float,\n'
+        '      "max_drawdown_risk": float,\n'
+        '      "market_risk_exposure": float,\n'
+        '      "overall_risk_score": float\n'
+        "  },\n"
+        '  "order": {\n'
+        '      "side": "buy" or "sell",\n'
+        '      "quantity": int,\n'
+        '      "entry_price": float,\n'
+        '      "stop_loss": float,\n'
+        '      "take_profit": float\n'
+        "  }\n"
+        "}\n\n"
+        "IMPORTANT: Do NOT return text. Do NOT explain. ONLY return JSON."
     )
 
+    # Run the trading system
     autohedge_result = trading_system.run(task=task)
+
+    # Save with custom risk rules
     saved = save_result(autohedge_result, capital_assumed=allocation_usd)
     return saved
+
 
 
 # =========================================================
