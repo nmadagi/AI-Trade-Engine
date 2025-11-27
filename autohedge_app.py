@@ -487,13 +487,14 @@ Rules:
     )
 
     response = groq_client.chat.completions.create(
-        model="llama-3.1-70b-versatile",
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-    )
+    model="llama-3.3-70b-versatile",
+    response_format={"type": "json_object"},
+    messages=[
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ],
+)
+
 
     result = json.loads(response.choices[0].message.content)
 
