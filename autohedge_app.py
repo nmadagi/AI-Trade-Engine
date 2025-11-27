@@ -1,10 +1,8 @@
-from openai import OpenAI
-
-# OpenAI client (for structuring AutoHedge output)
-openai_client = OpenAI()
-
-
 import os
+from groq import Groq
+
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -13,6 +11,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 from dotenv import load_dotenv
+
 
 # ================================
 # Env / secrets handling
@@ -223,8 +222,8 @@ Rules:
         f"{raw_text}"
     )
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-70b-versatile",
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -751,7 +750,7 @@ else:
 
                 st.subheader("Trades Detail")
                 st.dataframe(trades_df, use_container_width=True)
-                
+
 # Alpaca account/positions section
 st.markdown("---")
 st.header("📟 Alpaca Account & Positions (Paper)")
