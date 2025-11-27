@@ -2,5 +2,8 @@ streamlit
 pandas
 yfinance
 python-dotenv
-alpaca-trade-api
 groq
+alpaca-py
+requests
+urllib3
+
