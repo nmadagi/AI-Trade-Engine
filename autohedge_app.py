@@ -1,6 +1,8 @@
 from openai import OpenAI
 
-client = OpenAI()
+# OpenAI client (for structuring AutoHedge output)
+openai_client = OpenAI()
+
 
 import os
 import json
@@ -221,7 +223,7 @@ Rules:
         f"{raw_text}"
     )
 
-    response = client.chat.completions.create(
+    response = openai_client.chat.completions.create(
         model="gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=[
@@ -496,56 +498,39 @@ def run_autohedge(
 ):
     """
     Run the AutoFund (AutoHedge) pipeline for given stocks and allocation,
-    then save the result with our custom risk wrapper.
+    then LLM-postprocess into a perfectly structured JSON object and save.
     """
     trading_system = AutoFund(stocks)
 
-    # AutoFund expects a task per stock, so we iterate
-    stock = stocks[0]  # single-stock for now
+    # Use first stock symbol for now
+    stock = stocks[0] if isinstance(stocks, list) and stocks else stocks
 
-    # Clean + strict JSON-enforced task
+    # Let AutoHedge think freely; we'll clean the output with llm_structurize_output
     task = (
         f"Analyze {stock} and tell me whether to BUY, HOLD, or SELL. "
         f"We have ${allocation_usd:,.0f} allocation with a {strategy_type} style "
         f"and risk level {risk_level}/10. "
-        "You MUST return a VALID JSON object with EXACTLY these fields:\n\n"
-        "{\n"
-        '  "thesis": "...",\n'
-        '  "quant_analysis": {\n'
-        '      "technical_score": float,\n'
-        '      "volume_score": float,\n'
-        '      "trend_strength": float,\n'
-        '      "volatility": float,\n'
-        '      "probability_score": float,\n'
-        '      "key_levels": {\n'
-        '          "support": float,\n'
-        '          "resistance": float,\n'
-        '          "pivot": float\n'
-        "      }\n"
-        "  },\n"
-        '  "risk_assessment": {\n'
-        '      "position_size": float,\n'
-        '      "max_drawdown_risk": float,\n'
-        '      "market_risk_exposure": float,\n'
-        '      "overall_risk_score": float\n'
-        "  },\n"
-        '  "order": {\n'
-        '      "side": "buy" or "sell",\n'
-        '      "quantity": int,\n'
-        '      "entry_price": float,\n'
-        '      "stop_loss": float,\n'
-        '      "take_profit": float\n'
-        "  }\n"
-        "}\n\n"
-        "IMPORTANT: Do NOT return text. Do NOT explain. ONLY return JSON."
+        "Think like a hedge-fund team (director, quant, risk, execution) and "
+        "produce a single clear trade idea or decide to stay out."
     )
 
-    # Run the trading system
-    autohedge_result = trading_system.run(task=task)
+    # 1) Run the multi-agent AutoHedge brain (raw / messy output)
+    raw_result = trading_system.run(task=task)
 
-    # Save with custom risk rules
-    saved = save_result(autohedge_result, capital_assumed=allocation_usd)
+    # 2) Force it into our clean schema with llm_structurize_output
+    structured_result = llm_structurize_output(
+        raw_autohedge=raw_result,
+        stock=stock,
+        allocation_usd=allocation_usd,
+        strategy_type=strategy_type,
+        risk_level=risk_level,
+        task=task,
+    )
+
+    # 3) Save + return (now data has thesis, risk_assessment, order dict)
+    saved = save_result(structured_result, capital_assumed=allocation_usd)
     return saved
+
 
 
 
@@ -766,13 +751,13 @@ else:
 
                 st.subheader("Trades Detail")
                 st.dataframe(trades_df, use_container_width=True)
-
+                
 # Alpaca account/positions section
 st.markdown("---")
 st.header("📟 Alpaca Account & Positions (Paper)")
 
-client = get_alpaca_client()
-if client is None:
+alp_client = get_alpaca_client()
+if alp_client is None:
     st.info("Alpaca API keys not set or .env not loaded. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY to see account/positions.")
 else:
     try:
@@ -780,6 +765,7 @@ else:
     except Exception as e:
         st.error(f"Could not fetch Alpaca account (likely unauthorized). Please double-check your Paper API keys in .env. Error: {e}")
         acct = None
+
 
     if acct:
         col_a1, col_a2, col_a3 = st.columns(3)
