@@ -563,40 +563,46 @@ Rules:
 
 
 # =========================================================
-# Streamlit App
+# Streamlit App (single-column layout)
 # =========================================================
 
 st.set_page_config(page_title="AutoHedge + Alpaca Trading Dashboard", layout="wide")
 
-st.title("📈 AutoHedge Trading Dashboard (Single File)")
+st.title("📊 AutoHedge Trading Dashboard (Single File)")
 
 st.markdown(
     """
 This app lets you:
 
-- Run **AutoHedge** (multi-agent AI) to generate trade ideas  
+- Run **AutoHedge** (Groq-powered AI) to generate trade ideas  
 - Apply **your own risk rules** (max position, min notional)  
 - Optionally send orders to **Alpaca paper trading**  
-- See **thesis**, **risk**, **orders**  
+- See **thesis, quant analysis, risk, and orders**  
 - Run a **backtest** from AutoHedge signals (P&L, win rate, max drawdown, equity curve)  
 """
 )
 
-df = load_runs()
+# ---------------------------------------------------------
+# Load all runs
+# ---------------------------------------------------------
+df_all = load_runs()
 
 # ---------------- Sidebar Filters ----------------
 st.sidebar.header("Filters")
 
-if df.empty:
+selected_stock = None
+df = df_all.copy()
+
+if df_all.empty:
     st.sidebar.info("No runs yet. Use the form at the bottom to run AutoHedge.")
-    selected_stock = None
 else:
-    if "current_stock" in df.columns:
-        available_stocks = sorted(s for s in df["current_stock"].dropna().unique())
-    elif "stocks_str" in df.columns:
+    # available stocks
+    if "current_stock" in df_all.columns:
+        available_stocks = sorted(s for s in df_all["current_stock"].dropna().unique())
+    elif "stocks_str" in df_all.columns:
         available_stocks = sorted(
             set(
-                df["stocks_str"].dropna().apply(
+                df_all["stocks_str"].dropna().apply(
                     lambda s: str(s).split(",")[0].strip()
                 )
             )
@@ -605,205 +611,287 @@ else:
         available_stocks = []
 
     selected_stock = st.sidebar.selectbox(
-        "Select stock", options=available_stocks if available_stocks else ["(none)"]
+        "Select stock",
+        options=available_stocks if available_stocks else ["(none)"],
+        index=0 if available_stocks else 0,
     )
 
-    if "run_time" in df.columns and not df["run_time"].isna().all():
-        min_date = df["run_time"].min()
-        max_date = df["run_time"].max()
+    # date filter
+    if "run_time" in df_all.columns and not df_all["run_time"].isna().all():
+        min_date = df_all["run_time"].min()
+        max_date = df_all["run_time"].max()
         if pd.notna(min_date) and pd.notna(max_date):
             start_date, end_date = st.sidebar.date_input(
                 "Run date range",
                 value=[min_date.date(), max_date.date()],
             )
-            df = df[
-                (df["run_time"].dt.date >= start_date)
-                & (df["run_time"].dt.date <= end_date)
+            df = df_all[
+                (df_all["run_time"].dt.date >= start_date)
+                & (df_all["run_time"].dt.date <= end_date)
             ]
+        else:
+            df = df_all.copy()
+    else:
+        df = df_all.copy()
 
+    # filter by stock
     if selected_stock and selected_stock != "(none)":
         if "current_stock" in df.columns:
             df = df[df["current_stock"] == selected_stock]
         elif "stocks_str" in df.columns:
-            df = df[df["stocks_str"].str.contains(selected_stock)]
+            df = df[df["stocks_str"].astype(str).str.contains(selected_stock)]
 
-# ---------------- Main Sections ----------------
-if df.empty:
-    st.warning("No runs available with current filters.")
+
+# ---------------------------------------------------------
+# LATEST AUTOHEDGE VIEW
+# ---------------------------------------------------------
+st.markdown("## 🧠 Latest AutoHedge View")
+
+if df.empty or selected_stock is None or selected_stock == "(none)":
+    st.info("No runs available with current filters. Scroll down to **Run New AutoHedge Analysis** to create one.")
 else:
     latest = df.sort_values("run_time", ascending=False).iloc[0]
 
-    col1, col2 = st.columns([2, 1])
+    st.markdown(f"**Run Time (UTC):** {latest['run_time']}")
+    st.markdown(f"**Stock:** `{latest.get('current_stock', 'N/A')}`")
+    st.markdown(f"**Task:** {latest.get('task', 'N/A')}")
 
-    with col1:
-        st.subheader("🧠 Latest AutoHedge View")
-        st.markdown(f"**Run Time (UTC):** {latest['run_time']}")
-        st.markdown(f"**Stock:** `{latest.get('current_stock', 'N/A')}`")
-        st.markdown(f"**Task:** {latest.get('task', 'N/A')}")
+    # --- Thesis ---
+    st.markdown("### Thesis")
+    st.write(latest.get("thesis", "No thesis available"))
 
-        st.markdown("### Thesis")
-        st.write(latest.get("thesis", "No thesis available"))
+    # --- Risk Assessment (pretty metrics from nested dict if present) ---
+    st.markdown("### Risk Assessment")
 
-        st.markdown("### Risk Assessment")
-risk = latest.get("risk_assessment")
+    ra = latest.get("risk_assessment", {})
+    if isinstance(ra, dict):
+        pos_size = ra.get("position_size")
+        max_dd = ra.get("max_drawdown_risk")
+        mkt_exp = ra.get("market_risk_exposure")
+        overall_risk = ra.get("overall_risk_score")
 
-if isinstance(risk, dict):
-    col_r1, col_r2 = st.columns(2)
-    col_r1.metric("Position size (USD)", f"${risk.get('position_size', 0):,.0f}")
-    col_r1.metric("Max drawdown risk", f"{risk.get('max_drawdown_risk', 0)*100:.1f}%")
-    col_r2.metric("Market risk exposure", f"{risk.get('market_risk_exposure', 0)*100:.1f}%")
-    col_r2.metric("Overall risk score", f"{risk.get('overall_risk_score', 0)*100:.1f}%")
-else:
-    st.write("No risk assessment available")
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            st.metric(
+                "Position size (USD)",
+                f"${pos_size:,.0f}" if pos_size is not None else "N/A",
+            )
+            st.metric(
+                "Max drawdown risk",
+                f"{max_dd*100:.1f}%" if max_dd is not None else "N/A",
+            )
+        with col_r2:
+            st.metric(
+                "Market risk exposure",
+                f"{mkt_exp*100:.1f}%" if mkt_exp is not None else "N/A",
+            )
+            st.metric(
+                "Overall risk score",
+                f"{overall_risk*100:.1f}%" if overall_risk is not None else "N/A",
+            )
+    else:
+        st.write(ra if ra else "No structured risk assessment available.")
 
+    # -----------------------------------------------------
+    # SUGGESTED ORDER (AFTER CUSTOM RISK)
+    # -----------------------------------------------------
+    st.markdown("### 📋 Suggested Order (After Custom Risk)")
 
-    with col2:
-        st.subheader("📋 Suggested Order (After Custom Risk)")
-        st.markdown(f"**Custom risk approved:** {latest.get('custom_risk_approved', 'N/A')}")
-        st.markdown(f"**Reason:** {latest.get('custom_risk_reason', 'N/A')}")
+    st.markdown(
+        f"**Custom risk approved:** {latest.get('custom_risk_approved', 'N/A')}"
+    )
+    st.markdown(f"**Reason:** {latest.get('custom_risk_reason', 'N/A')}")
 
-        order_fields = {
-            "Side": latest.get("order_side"),
-            "Quantity": latest.get("order_quantity"),
-            "Entry Price": latest.get("order_entry_price"),
-            "Notional": latest.get("order_notional"),
-        }
-        for k, v in order_fields.items():
-            st.markdown(f"**{k}:** {v if v is not None else 'N/A'}")
-
-        # Optional: send to Alpaca
-        st.markdown("### 🚀 Send Order to Alpaca (Paper)")
-        if st.button("Send latest order to Alpaca"):
-            if not latest.get("order_side") or not latest.get("order_quantity"):
-                st.error("Order side or quantity missing.")
-            elif not selected_stock or selected_stock == "(none)":
-                st.error("Select a stock in sidebar first.")
+    order_fields = {
+        "Side": latest.get("order_side"),
+        "Quantity": latest.get("order_quantity"),
+        "Entry Price": latest.get("order_entry_price"),
+        "Notional": latest.get("order_notional"),
+    }
+    for k, v in order_fields.items():
+        if isinstance(v, float):
+            if k == "Notional" or "Price" in k:
+                display_val = f"${v:,.2f}"
             else:
-                try:
-                    placed = alpaca_place_market_order(
-                        symbol=selected_stock,
-                        side=str(latest["order_side"]),
-                        qty=float(latest["order_quantity"]),
-                    )
-                    st.success(f"Order sent to Alpaca. ID: {placed.id}")
-                    st.json(dict(placed))
-                except Exception as e:
-                    st.error(f"Error placing order: {e}")
+                display_val = f"{v:,.4f}"
+        else:
+            display_val = v if v is not None else "N/A"
+        st.markdown(f"**{k}:** {display_val}")
 
-    # Historical runs
-    st.subheader("📜 Historical Runs")
+    # Optional: send to Alpaca
+    st.markdown("#### 🚀 Send Latest Order to Alpaca (Paper)")
+    if st.button("Send latest order to Alpaca"):
+        if not latest.get("order_side") or not latest.get("order_quantity"):
+            st.error("Order side or quantity missing.")
+        elif not selected_stock or selected_stock == "(none)":
+            st.error("Select a stock in the sidebar first.")
+        else:
+            try:
+                placed = alpaca_place_market_order(
+                    symbol=selected_stock,
+                    side=str(latest["order_side"]),
+                    qty=float(latest["order_quantity"]),
+                )
+                st.success(f"Order sent to Alpaca. ID: {placed.id}")
+                st.json(dict(placed))
+            except Exception as e:
+                st.error(f"Error placing order: {e}")
+
+# ---------------------------------------------------------
+# HISTORICAL RUNS TABLE
+# ---------------------------------------------------------
+st.markdown("---")
+st.markdown("## 📜 Historical Runs")
+
+if df_all.empty:
+    st.info("No AutoHedge runs saved yet.")
+else:
+    display_df = df_all.copy()
 
     display_cols = [
         col
         for col in [
-            "run_time", "current_stock", "stocks_str",
-            "task", "thesis", "risk_assessment",
-            "order_side", "order_quantity", "order_entry_price", "order_notional",
+            "run_time",
+            "current_stock",
+            "stocks_str",
+            "task",
+            "thesis",
+            "order_side",
+            "order_quantity",
+            "order_entry_price",
+            "order_notional",
             "custom_risk_approved",
         ]
-        if col in df.columns
+        if col in display_df.columns
     ]
 
     st.dataframe(
-        df[display_cols].sort_values("run_time", ascending=False),
+        display_df[display_cols].sort_values("run_time", ascending=False),
         use_container_width=True,
     )
 
-    # Price chart
-    if selected_stock and selected_stock != "(none)":
-        st.subheader(f"💹 Recent Price – {selected_stock}")
-        days_back = st.slider(
-            "Days back for price chart", min_value=10, max_value=180, value=60, step=10
-        )
-        price_df = get_yfinance_price_series(selected_stock, days_back=days_back)
-        if price_df is not None:
-            st.line_chart(price_df["Close"])
-        else:
-            st.info("No price data available for this ticker.")
-
-    # Backtest
-    st.markdown("---")
-    st.header("📊 Backtest From AutoHedge Signals")
-
-    if not selected_stock or selected_stock == "(none)":
-        st.info("Select a stock in the sidebar to run a backtest.")
-    else:
-        col_bt1, col_bt2, col_bt3 = st.columns(3)
-        with col_bt1:
-            start_capital = st.number_input(
-                "Starting capital (USD)", min_value=1_000.0, value=100_000.0, step=1_000.0
-            )
-        with col_bt2:
-            risk_pct = st.slider(
-                "Risk per trade (% of capital)",
-                min_value=1.0, max_value=50.0, value=5.0, step=1.0,
-            )
-        with col_bt3:
-            holding_days = st.slider(
-                "Holding period (days)", min_value=1, max_value=30, value=5, step=1
-            )
-
-        if st.button("Run Backtest"):
-            with st.spinner("Running backtest..."):
-                metrics, trades_df, equity_series = run_simple_backtest(
-                    df_runs=df,
-                    ticker=selected_stock,
-                    start_capital=start_capital,
-                    risk_per_trade_pct=risk_pct / 100.0,
-                    holding_period_days=holding_days,
-                )
-
-            if metrics is None:
-                st.warning("No valid BUY/LONG signals to backtest.")
-            else:
-                st.subheader("Backtest Metrics")
-                m = metrics
-
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric(
-                    "End capital",
-                    f"${m['end_capital']:,.2f}",
-                    f"{m['total_return']*100:.1f}%",
-                )
-                col_m2.metric(
-                    "CAGR", f"{m['cagr']*100:.2f}%" if m["cagr"] is not None else "N/A"
-                )
-                col_m3.metric(
-                    "Win rate",
-                    f"{m['win_rate']*100:.1f}%" if m["win_rate"] is not None else "N/A",
-                )
-
-                col_m4, col_m5, col_m6 = st.columns(3)
-                col_m4.metric(
-                    "Max drawdown",
-                    f"{m['max_drawdown']*100:.1f}%" if m["max_drawdown"] is not None else "N/A",
-                )
-                col_m5.metric(
-                    "Profit factor",
-                    f"{m['profit_factor']:.2f}" if m["profit_factor"] is not None else "N/A",
-                )
-                col_m6.metric("Trades", m["num_trades"])
-
-                st.subheader("Equity Curve")
-                st.line_chart(equity_series)
-
-                st.subheader("Trades Detail")
-                st.dataframe(trades_df, use_container_width=True)
-
-# Alpaca account/positions section
+# ---------------------------------------------------------
+# PRICE CHART FOR SELECTED STOCK
+# ---------------------------------------------------------
 st.markdown("---")
-st.header("📟 Alpaca Account & Positions (Paper)")
+st.markdown("## 💹 Recent Price")
+
+if not selected_stock or selected_stock == "(none)":
+    st.info("Select a stock in the sidebar to see its recent price.")
+else:
+    days_back = st.slider(
+        "Days back for price chart", min_value=10, max_value=180, value=60, step=10
+    )
+    price_df = get_yfinance_price_series(selected_stock, days_back=days_back)
+    if price_df is not None:
+        st.line_chart(price_df["Close"])
+    else:
+        st.info("No price data available for this ticker.")
+
+# ---------------------------------------------------------
+# BACKTEST SECTION
+# ---------------------------------------------------------
+st.markdown("---")
+st.markdown("## 📈 Backtest From AutoHedge Signals")
+
+if df.empty or not selected_stock or selected_stock == "(none)":
+    st.info("Need at least one BUY/LONG signal for the selected stock to run a backtest.")
+else:
+    col_bt1, col_bt2, col_bt3 = st.columns(3)
+    with col_bt1:
+        start_capital = st.number_input(
+            "Starting capital (USD)",
+            min_value=1_000.0,
+            value=100_000.0,
+            step=1_000.0,
+        )
+    with col_bt2:
+        risk_pct = st.slider(
+            "Risk per trade (% of capital)",
+            min_value=1.0,
+            max_value=50.0,
+            value=5.0,
+            step=1.0,
+        )
+    with col_bt3:
+        holding_days = st.slider(
+            "Holding period (days)", min_value=1, max_value=30, value=5, step=1
+        )
+
+    if st.button("Run Backtest"):
+        with st.spinner("Running backtest..."):
+            metrics, trades_df, equity_series = run_simple_backtest(
+                df_runs=df,
+                ticker=selected_stock,
+                start_capital=start_capital,
+                risk_per_trade_pct=risk_pct / 100.0,
+                holding_period_days=holding_days,
+            )
+
+        if metrics is None:
+            st.warning("No valid BUY/LONG signals to backtest.")
+        else:
+            st.subheader("Backtest Metrics")
+            m = metrics
+
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric(
+                "End capital",
+                f"${m['end_capital']:,.2f}",
+                f"{m['total_return']*100:.1f}%",
+            )
+            col_m2.metric(
+                "CAGR",
+                f"{m['cagr']*100:.2f}%" if m["cagr"] is not None else "N/A",
+            )
+            col_m3.metric(
+                "Win rate",
+                f"{m['win_rate']*100:.1f}%" if m["win_rate"] is not None else "N/A",
+            )
+
+            col_m4, col_m5, col_m6 = st.columns(3)
+            col_m4.metric(
+                "Max drawdown",
+                f"{m['max_drawdown']*100:.1f}%"
+                if m["max_drawdown"] is not None
+                else "N/A",
+            )
+            col_m5.metric(
+                "Profit factor",
+                f"{m['profit_factor']:.2f}"
+                if m["profit_factor"] is not None
+                else "N/A",
+            )
+            col_m6.metric("Trades", m["num_trades"])
+
+            st.subheader("Equity Curve")
+            st.line_chart(equity_series)
+
+            st.subheader("Trades Detail")
+            st.dataframe(trades_df, use_container_width=True)
+
+# ---------------------------------------------------------
+# ALPACA ACCOUNT & POSITIONS
+# ---------------------------------------------------------
+st.markdown("---")
+st.markdown("## 📟 Alpaca Account & Positions (Paper)")
 
 alp_client = get_alpaca_client()
 if alp_client is None:
-    st.info("Alpaca API keys not set or .env not loaded. Set APCA_API_KEY_ID and APCA_API_SECRET_KEY to see account/positions.")
+    st.info(
+        "Alpaca API keys not set or .env not loaded. "
+        "Set APCA_API_KEY_ID and APCA_API_SECRET_KEY to see account/positions."
+    )
 else:
     try:
         acct = alpaca_get_account()
     except Exception as e:
-        st.error(f"Could not fetch Alpaca account (likely unauthorized). Please double-check your Paper API keys in .env. Error: {e}")
+        st.error(
+            "Could not fetch Alpaca account (likely unauthorized). "
+            "Please double-check your Paper API keys in .env. "
+            f"Error: {e}"
+        )
         acct = None
-
 
     if acct:
         col_a1, col_a2, col_a3 = st.columns(3)
@@ -829,15 +917,16 @@ else:
         else:
             st.info("No open positions in Alpaca paper account.")
 
-
-# Run new AutoHedge
+# ---------------------------------------------------------
+# RUN NEW AUTOHEDGE ANALYSIS
+# ---------------------------------------------------------
 st.markdown("---")
-st.header("⚙️ Run New AutoHedge Analysis")
+st.markdown("## ⚙️ Run New AutoHedge Analysis")
 
 with st.form("new_run_form"):
-    tickers_input = st.text_input("Tickers (comma-separated)", value="NVDA")
+    tickers_input = st.text_input("Tickers (comma-separated)", value="TSLA")
     allocation = st.number_input(
-        "Allocation (USD)", min_value=1000.0, value=50_000.0, step=1000.0
+        "Allocation (USD)", min_value=1000.0, value=10_000.0, step=1000.0
     )
     strategy = st.selectbox(
         "Strategy type", ["momentum", "mean-reversion", "trend-following", "value"]
