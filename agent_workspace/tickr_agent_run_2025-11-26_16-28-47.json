@@ -1,0 +1,27 @@
+{
+    "logs": [
+        {
+            "stock_data": {
+                "ticker": "NVDA",
+                "price": 180.25999450683594,
+                "market_cap": 4396100878336,
+                "pe_ratio": 44.618813,
+                "eps": 4.04,
+                "dividend_yield": 0.02,
+                "rsi": 43.504975329927056,
+                "ma_50": 186.8146011352539,
+                "ma_200": 153.4284051513672,
+                "short_term_trend": "Uptrend",
+                "sector": "Technology",
+                "industry": "Semiconductors",
+                "company_name": "NVIDIA Corporation",
+                "summary": "NVIDIA Corporation, a computing infrastructure company, provides graphics and compute and networking solutions in the United States, Singapore, Taiwan, China, Hong Kong, and internationally. The Compute & Networking segment includes its Data Centre accelerated computing platforms and artificial intelligence solutions and software; networking; automotive platforms and autonomous and electric vehicle solutions; Jetson for robotics and other embedded platforms; and DGX Cloud computing services. The Graphics segment offers GeForce GPUs for gaming and PCs, the GeForce NOW game streaming service and related infrastructure, and solutions for gaming platforms; Quadro/NVIDIA RTX GPUs for enterprise workstation graphics; virtual GPU or vGPU software for cloud-based visual and virtual computing; automotive platforms for infotainment systems; and Omniverse software for building and operating industrial AI and digital twin applications. It also customized agentic solutions designed in collaboration with NVIDIA to accelerate enterprise AI adoption. The company's products are used in gaming, professional visualization, data center, and automotive markets. It sells its products to original equipment manufacturers, original device manufacturers, system integrators and distributors, independent software vendors, cloud service providers, consumer internet companies, add-in board manufacturers, distributors, automotive manufacturers and tier-1 automotive suppliers, and other ecosystem participants. NVIDIA Corporation was incorporated in 1993 and is headquartered in Santa Clara, California.",
+                "volume": 181798274,
+                "implied_volatility": "N/A"
+            },
+            "summary": "",
+            "time_stamp": "2025-11-26 16:28:25"
+        }
+    ],
+    "time_stamp": "2025-11-26 16:28:47"
+}

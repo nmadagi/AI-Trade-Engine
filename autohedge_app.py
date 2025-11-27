@@ -1,3 +1,7 @@
+from openai import OpenAI
+
+client = OpenAI()
+
 import os
 import json
 from pathlib import Path
@@ -162,6 +166,76 @@ def apply_custom_risk_rules(order: dict, capital: float,
         "reason": f"Order capped at {max_position_pct*100:.1f}% of capital.",
     }
 
+def llm_structurize_output(
+    raw_autohedge,
+    stock: str,
+    allocation_usd: float,
+    strategy_type: str,
+    risk_level: int,
+    task: str,
+):
+    """
+    Take whatever AutoFund returned (logs / text / dict) and force it
+    into a STRICT JSON structure with:
+      - thesis (str)
+      - quant_analysis (str)
+      - risk_assessment (str)
+      - order: {side, quantity, entry_price, stop_loss, take_profit}
+    """
+    # Turn raw result into plain text for the LLM
+    if isinstance(raw_autohedge, dict):
+        raw_text = json.dumps(raw_autohedge, indent=2)
+    else:
+        raw_text = str(raw_autohedge)
+
+    system_prompt = """
+You are a trading assistant that outputs STRICT JSON only.
+
+Given messy trading analysis text/logs, you must return a single JSON object
+with exactly these top-level keys:
+
+- "thesis": string
+- "quant_analysis": string
+- "risk_assessment": string
+- "order": object with keys:
+    - "side": "buy" or "sell"
+    - "quantity": integer
+    - "entry_price": float
+    - "stop_loss": float
+    - "take_profit": float
+
+Rules:
+- Always choose a single clear direction ("buy" or "sell") based on the analysis.
+- Make quantities and prices realistic but simple if not specified.
+- Never include extra top-level keys.
+- Never output explanations, only JSON.
+"""
+
+    user_content = (
+        f"Stock: {stock}\n"
+        f"Allocation: {allocation_usd}\n"
+        f"Strategy type: {strategy_type}\n"
+        f"Risk level: {risk_level}/10\n"
+        f"Task: {task}\n\n"
+        "Raw AutoHedge output:\n"
+        f"{raw_text}"
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    )
+
+    structured = json.loads(response.choices[0].message.content)
+
+    # Add some metadata so save_result can see it
+    structured["stocks"] = [stock]
+    structured["task"] = task
+    return structured
 
 # =========================================================
 # AutoHedge Run + Save
@@ -169,17 +243,18 @@ def apply_custom_risk_rules(order: dict, capital: float,
 
 def save_result(autohedge_result, capital_assumed: float = 100_000.0):
     """
-    Save AutoHedgeOutput + custom risk info into JSONL file.
+    Save AutoHedgeOutput (already structured by our LLM helper)
+    plus custom risk info into the JSONL file used by the dashboard.
     """
 
-    # ---------- Handle AutoFund return types ----------
-    if isinstance(autohedge_result, str):
-        # AutoFund returned a JSON string – try to parse it
+    # ---------- Normalize to a Python dict ----------
+    if isinstance(autohedge_result, dict):
+        data = autohedge_result
+    elif isinstance(autohedge_result, str):
+        # Try to parse JSON string, otherwise store raw
         try:
-            parsed = json.loads(autohedge_result)
-            data = parsed
+            data = json.loads(autohedge_result)
         except Exception:
-            # If parsing fails, at least keep the raw text
             data = {"raw_output": autohedge_result}
     else:
         if hasattr(autohedge_result, "model_dump"):
@@ -187,41 +262,38 @@ def save_result(autohedge_result, capital_assumed: float = 100_000.0):
         elif hasattr(autohedge_result, "dict"):
             data = autohedge_result.dict()
         else:
-            data = (
-                autohedge_result.__dict__
-                if hasattr(autohedge_result, "__dict__")
-                else {"result": autohedge_result}
-            )
-
+            data = getattr(autohedge_result, "__dict__", {"result": autohedge_result})
 
     # ---------- Custom Risk Rules ----------
-    order = data.get("order") if isinstance(data.get("order"), dict) else {}
-    risk_eval = apply_custom_risk_rules(order, capital=capital_assumed)
+    order = data.get("order")
+    if isinstance(order, dict):
+        risk_eval = apply_custom_risk_rules(order, capital=capital_assumed)
+    else:
+        risk_eval = {
+            "approved": False,
+            "reason": "No valid order provided by AutoHedge.",
+            "adjusted_order": None,
+        }
 
     data["custom_risk_approved"] = risk_eval["approved"]
     data["custom_risk_reason"] = risk_eval["reason"]
     data["custom_risk_capital_assumed"] = capital_assumed
     data["custom_risk_order"] = risk_eval["adjusted_order"]
 
-    adj_order = risk_eval["adjusted_order"] or {}
+    # Prefer adjusted_order; fall back to original order
+    adj_order = risk_eval["adjusted_order"] or (order if isinstance(order, dict) else {})
 
-    data["order_side"] = (
-        adj_order.get("side")
-        or order.get("side")
-        or order.get("action")
-    )
-    data["order_quantity"] = (
-        adj_order.get("quantity")
-        or order.get("quantity")
-        or order.get("qty")
-    )
-    data["order_entry_price"] = (
-        adj_order.get("entry_price")
-        or adj_order.get("price")
-        or order.get("entry_price")
-        or order.get("price")
-    )
-    data["order_notional"] = adj_order.get("notional")
+    data["order_side"] = adj_order.get("side") or adj_order.get("action")
+    data["order_quantity"] = adj_order.get("quantity") or adj_order.get("qty")
+    data["order_entry_price"] = adj_order.get("entry_price") or adj_order.get("price")
+
+    if data.get("order_entry_price") is not None and data.get("order_quantity") is not None:
+        try:
+            data["order_notional"] = float(data["order_entry_price"]) * float(data["order_quantity"])
+        except Exception:
+            data["order_notional"] = None
+    else:
+        data["order_notional"] = None
 
     # ---------- Add timestamp ----------
     data["run_time"] = datetime.utcnow().isoformat()
@@ -231,9 +303,6 @@ def save_result(autohedge_result, capital_assumed: float = 100_000.0):
         f.write(json.dumps(data) + "\n")
 
     return data
-
-
-
 
 # =========================================================
 # Load Runs + Price Data
