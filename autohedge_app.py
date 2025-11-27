@@ -303,8 +303,8 @@ def run_simple_backtest(
     """
     Simple long-only backtest:
       - Uses BUY/LONG signals
-      - Enter at next day's open
-      - Exit after holding_period_days at close
+      - Enter at same-day CLOSE
+      - Exit after `holding_period_days` at CLOSE
     """
     if df_runs.empty:
         return None, None, None
@@ -326,15 +326,22 @@ def run_simple_backtest(
         if pd.isna(run_time):
             continue
 
-        entry_day = get_next_trading_day(run_time)
+        # Enter at same-day close, exit after holding_period_days
+        entry_day = run_time.date()
         exit_day = entry_day + timedelta(days=holding_period_days)
 
-        prices = yf.download(ticker, start=entry_day, end=exit_day + timedelta(days=1))
+        prices = yf.download(
+            ticker,
+            start=entry_day,
+            end=exit_day + timedelta(days=1),
+        )
+
         if prices.empty:
             continue
 
+        # First available bar = entry day, last bar = exit day
         entry_ts = prices.index[0]
-        entry_price = float(prices["Open"].iloc[0])
+        entry_price = float(prices["Close"].iloc[0])
 
         exit_ts = prices.index[-1]
         exit_price = float(prices["Close"].iloc[-1])
@@ -371,6 +378,50 @@ def run_simple_backtest(
 
     trades_df = pd.DataFrame(trades)
     equity_series = pd.Series(equity[1:], index=equity_dates, name="equity")
+
+    # Metrics
+    total_return = capital / start_capital - 1.0
+    start_date = trades_df["entry_time"].min()
+    end_date = trades_df["exit_time"].max()
+    days = (end_date - start_date).days if start_date is not None and end_date is not None else 0
+    years = days / 365.25 if days > 0 else None
+    cagr = (capital / start_capital) ** (1 / years) - 1 if years and years > 0 else None
+
+    wins = (trades_df["pnl"] > 0).sum()
+    losses = (trades_df["pnl"] < 0).sum()
+    win_rate = wins / (wins + losses) if (wins + losses) > 0 else None
+
+    avg_win = trades_df.loc[trades_df["pnl"] > 0, "pnl"].mean()
+    avg_loss = trades_df.loc[trades_df["pnl"] < 0, "pnl"].mean()
+    gross_profit = trades_df.loc[trades_df["pnl"] > 0, "pnl"].sum()
+    gross_loss = trades_df.loc[trades_df["pnl"] < 0, "pnl"].sum()
+    profit_factor = (gross_profit / abs(gross_loss)) if gross_loss < 0 else None
+
+    equity_values = equity_series.values
+    running_max = []
+    max_val = -float("inf")
+    for v in equity_values:
+        if v > max_val:
+            max_val = v
+        running_max.append(max_val)
+    dd = equity_values / (pd.Series(running_max).values) - 1.0
+    max_drawdown = dd.min() if len(dd) > 0 else None
+
+    metrics = {
+        "start_capital": start_capital,
+        "end_capital": capital,
+        "total_return": total_return,
+        "cagr": cagr,
+        "num_trades": len(trades_df),
+        "win_rate": win_rate,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "profit_factor": profit_factor,
+        "max_drawdown": max_drawdown,
+    }
+
+    return metrics, trades_df, equity_series
+
 
     # Metrics
     total_return = capital / start_capital - 1.0
@@ -594,7 +645,17 @@ else:
         st.write(latest.get("thesis", "No thesis available"))
 
         st.markdown("### Risk Assessment")
-        st.write(latest.get("risk_assessment", "No risk assessment available"))
+risk = latest.get("risk_assessment")
+
+if isinstance(risk, dict):
+    col_r1, col_r2 = st.columns(2)
+    col_r1.metric("Position size (USD)", f"${risk.get('position_size', 0):,.0f}")
+    col_r1.metric("Max drawdown risk", f"{risk.get('max_drawdown_risk', 0)*100:.1f}%")
+    col_r2.metric("Market risk exposure", f"{risk.get('market_risk_exposure', 0)*100:.1f}%")
+    col_r2.metric("Overall risk score", f"{risk.get('overall_risk_score', 0)*100:.1f}%")
+else:
+    st.write("No risk assessment available")
+
 
     with col2:
         st.subheader("📋 Suggested Order (After Custom Risk)")
