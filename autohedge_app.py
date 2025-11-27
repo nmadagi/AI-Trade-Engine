@@ -39,6 +39,7 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 
 RESULTS_FILE = "autohedge_runs.jsonl"
 
+
 # =========================================================
 # Alpaca Helpers (Paper Trading)
 # =========================================================
@@ -430,20 +431,24 @@ def run_autohedge(
     """
     trading_system = AutoFund(stocks)
     tickers = ", ".join(stocks)
+    # Use the first stock name for a more natural sentence
+    stock = stocks[0] if stocks else tickers
 
     task = (
-        f"Analyze {tickers} and tell me whether to buy, hold, or sell. "
-        f"We have ${allocation_usd:,.0f} allocation with a {strategy_type} style "
-        f"and risk level {risk_level}/10. "
-        "In your thesis, explicitly break down: "
-        "1) key signals you used, 2) why they matter, "
-        "3) what could go wrong with this trade. "
-        "Return a clear thesis, quant view, risk view, and structured order."
+        f"Analyze {stock} and tell me whether to BUY, HOLD, or SELL. "
+        "You MUST return a valid JSON object with fields: "
+        "'thesis', 'quant_analysis', 'risk_assessment', and 'order'. "
+        "The 'order' field must itself be a JSON object with keys: "
+        "'side' ('buy' or 'sell'), 'quantity' (int), 'entry_price' (float), "
+        "'stop_loss' (float), 'take_profit' (float). "
+        f"We have ${allocation_usd:,.0f} allocation with a {strategy_type} style and "
+        f"risk level {risk_level}/10."
     )
 
     autohedge_result = trading_system.run(task=task)
     saved = save_result(autohedge_result, capital_assumed=allocation_usd)
     return saved
+
 
 # =========================================================
 # Streamlit App
