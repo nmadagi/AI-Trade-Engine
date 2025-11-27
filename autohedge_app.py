@@ -1,8 +1,4 @@
 import os
-from groq import Groq
-
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -11,7 +7,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 from dotenv import load_dotenv
-
+from groq import Groq
 
 # ================================
 # Env / secrets handling
@@ -21,7 +17,7 @@ load_dotenv()
 
 # Also support Streamlit Cloud secrets
 for key in [
-    "OPENAI_API_KEY",
+    "GROQ_API_KEY",        # ✅ add this
     "WORKSPACE_DIR",
     "APCA_API_KEY_ID",
     "APCA_API_SECRET_KEY",
@@ -34,13 +30,14 @@ for key in [
         # st.secrets not available when running as plain script
         pass
 
-# ⬇️ only now import AutoFund so it sees OPENAI_API_KEY
-from autohedge import AutoFund
+# Now create the Groq client (env var is set)
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Alpaca
+# Alpaca imports stay the same...
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+
 
 RESULTS_FILE = "autohedge_runs.jsonl"
 
@@ -166,77 +163,6 @@ def apply_custom_risk_rules(order: dict, capital: float,
         "adjusted_order": adjusted_order,
         "reason": f"Order capped at {max_position_pct*100:.1f}% of capital.",
     }
-
-def llm_structurize_output(
-    raw_autohedge,
-    stock: str,
-    allocation_usd: float,
-    strategy_type: str,
-    risk_level: int,
-    task: str,
-):
-    """
-    Take whatever AutoFund returned (logs / text / dict) and force it
-    into a STRICT JSON structure with:
-      - thesis (str)
-      - quant_analysis (str)
-      - risk_assessment (str)
-      - order: {side, quantity, entry_price, stop_loss, take_profit}
-    """
-    # Turn raw result into plain text for the LLM
-    if isinstance(raw_autohedge, dict):
-        raw_text = json.dumps(raw_autohedge, indent=2)
-    else:
-        raw_text = str(raw_autohedge)
-
-    system_prompt = """
-You are a trading assistant that outputs STRICT JSON only.
-
-Given messy trading analysis text/logs, you must return a single JSON object
-with exactly these top-level keys:
-
-- "thesis": string
-- "quant_analysis": string
-- "risk_assessment": string
-- "order": object with keys:
-    - "side": "buy" or "sell"
-    - "quantity": integer
-    - "entry_price": float
-    - "stop_loss": float
-    - "take_profit": float
-
-Rules:
-- Always choose a single clear direction ("buy" or "sell") based on the analysis.
-- Make quantities and prices realistic but simple if not specified.
-- Never include extra top-level keys.
-- Never output explanations, only JSON.
-"""
-
-    user_content = (
-        f"Stock: {stock}\n"
-        f"Allocation: {allocation_usd}\n"
-        f"Strategy type: {strategy_type}\n"
-        f"Risk level: {risk_level}/10\n"
-        f"Task: {task}\n\n"
-        "Raw AutoHedge output:\n"
-        f"{raw_text}"
-    )
-
-    response = groq_client.chat.completions.create(
-        model="llama-3.1-70b-versatile",
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-    )
-
-    structured = json.loads(response.choices[0].message.content)
-
-    # Add some metadata so save_result can see it
-    structured["stocks"] = [stock]
-    structured["task"] = task
-    return structured
 
 # =========================================================
 # AutoHedge Run + Save
@@ -496,39 +422,90 @@ def run_autohedge(
     risk_level: int = 5,
 ):
     """
-    Run the AutoFund (AutoHedge) pipeline for given stocks and allocation,
-    then LLM-postprocess into a perfectly structured JSON object and save.
-    """
-    trading_system = AutoFund(stocks)
+    Pure Groq version of AutoHedge:
 
+    - Calls Groq once with a strict JSON schema
+    - Returns thesis, quant_analysis, risk_assessment, and order
+    - Then passes the result through our custom risk wrapper + saver
+    """
     # Use first stock symbol for now
     stock = stocks[0] if isinstance(stocks, list) and stocks else stocks
 
-    # Let AutoHedge think freely; we'll clean the output with llm_structurize_output
     task = (
         f"Analyze {stock} and tell me whether to BUY, HOLD, or SELL. "
         f"We have ${allocation_usd:,.0f} allocation with a {strategy_type} style "
         f"and risk level {risk_level}/10. "
-        "Think like a hedge-fund team (director, quant, risk, execution) and "
-        "produce a single clear trade idea or decide to stay out."
+        "Think like a small hedge-fund team (director, quant, risk, execution) "
+        "and produce one clear trade idea, or explicitly decide to stay out."
     )
 
-    # 1) Run the multi-agent AutoHedge brain (raw / messy output)
-    raw_result = trading_system.run(task=task)
+    system_prompt = """
+You are an AI trading desk. You MUST respond with a single JSON object
+with EXACTLY these top-level keys:
 
-    # 2) Force it into our clean schema with llm_structurize_output
-    structured_result = llm_structurize_output(
-        raw_autohedge=raw_result,
-        stock=stock,
-        allocation_usd=allocation_usd,
-        strategy_type=strategy_type,
-        risk_level=risk_level,
-        task=task,
+- "thesis": string
+- "quant_analysis": {
+    "technical_score": float,          # 0–1
+    "volume_score": float,             # 0–1
+    "trend_strength": float,           # 0–1
+    "volatility": float,               # annualized or simple number
+    "probability_score": float,        # 0–1 probability this trade works
+    "key_levels": {
+        "support": float,
+        "resistance": float,
+        "pivot": float
+    }
+  }
+- "risk_assessment": {
+    "position_size": float,            # dollar notional you recommend
+    "max_drawdown_risk": float,        # 0–1
+    "market_risk_exposure": float,     # 0–1
+    "overall_risk_score": float        # 0–1 (higher = riskier)
+  }
+- "order": {
+    "side": "buy" or "sell" or "flat", # flat = no trade
+    "quantity": int,
+    "entry_price": float,
+    "stop_loss": float,
+    "take_profit": float
+  }
+
+Rules:
+- ALWAYS fill every field with a reasonable numeric value.
+- If you think we should not trade, set side = "flat", quantity = 0, and
+  still give thesis and risk explanation.
+- Do NOT add extra top-level keys.
+- Do NOT write explanations outside JSON. Output JSON ONLY.
+"""
+
+    user_content = (
+        f"Stock: {stock}\n"
+        f"Allocation: {allocation_usd}\n"
+        f"Strategy type: {strategy_type}\n"
+        f"Risk level: {risk_level}/10\n"
+        f"Task: {task}\n"
     )
 
-    # 3) Save + return (now data has thesis, risk_assessment, order dict)
-    saved = save_result(structured_result, capital_assumed=allocation_usd)
+    response = groq_client.chat.completions.create(
+        model="llama-3.1-70b-versatile",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    )
+
+    result = json.loads(response.choices[0].message.content)
+
+    # Add metadata that the dashboard expects
+    result["stocks"] = [stock]
+    result["current_stock"] = stock
+    result["task"] = task
+
+    # Save + return (save_result will handle risk rules / notional, etc.)
+    saved = save_result(result, capital_assumed=allocation_usd)
     return saved
+
 
 
 
