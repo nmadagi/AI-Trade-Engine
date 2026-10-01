@@ -17,7 +17,7 @@ load_dotenv()
 
 # Also support Streamlit Cloud secrets
 for key in [
-    "GROQ_API_KEY",        # ✅ add this
+    "GROQ_API_KEY",        # add this
     "WORKSPACE_DIR",
     "APCA_API_KEY_ID",
     "APCA_API_SECRET_KEY",
@@ -496,11 +496,11 @@ with EXACTLY these top-level keys:
 
 - "thesis": string
 - "quant_analysis": {
-    "technical_score": float,          # 0–1
-    "volume_score": float,             # 0–1
-    "trend_strength": float,           # 0–1
+    "technical_score": float,          # 0-1
+    "volume_score": float,             # 0-1
+    "trend_strength": float,           # 0-1
     "volatility": float,               # annualized or simple number
-    "probability_score": float,        # 0–1 probability this trade works
+    "probability_score": float,        # 0-1 probability this trade works
     "key_levels": {
         "support": float,
         "resistance": float,
@@ -509,9 +509,9 @@ with EXACTLY these top-level keys:
   }
 - "risk_assessment": {
     "position_size": float,            # dollar notional you recommend
-    "max_drawdown_risk": float,        # 0–1
-    "market_risk_exposure": float,     # 0–1
-    "overall_risk_score": float        # 0–1 (higher = riskier)
+    "max_drawdown_risk": float,        # 0-1
+    "market_risk_exposure": float,     # 0-1
+    "overall_risk_score": float        # 0-1 (higher = riskier)
   }
 - "order": {
     "side": "buy" or "sell" or "flat", # flat = no trade
@@ -568,7 +568,7 @@ Rules:
 
 st.set_page_config(page_title="AutoHedge + Alpaca Trading Dashboard", layout="wide")
 
-st.title("📊 AutoHedge Trading Dashboard (Single File)")
+st.title("AutoHedge Trading Dashboard (Single File)")
 
 st.markdown(
     """
@@ -645,7 +645,7 @@ else:
 # ---------------------------------------------------------
 # LATEST AUTOHEDGE VIEW
 # ---------------------------------------------------------
-st.markdown("## 🧠 Latest AutoHedge View")
+st.markdown("## Latest AutoHedge View")
 
 if df.empty or selected_stock is None or selected_stock == "(none)":
     st.info("No runs available with current filters. Scroll down to **Run New AutoHedge Analysis** to create one.")
@@ -695,7 +695,7 @@ else:
     # -----------------------------------------------------
     # SUGGESTED ORDER (AFTER CUSTOM RISK)
     # -----------------------------------------------------
-    st.markdown("### 📋 Suggested Order (After Custom Risk)")
+    st.markdown("### Suggested Order (After Custom Risk)")
 
     st.markdown(
         f"**Custom risk approved:** {latest.get('custom_risk_approved', 'N/A')}"
@@ -719,7 +719,7 @@ else:
         st.markdown(f"**{k}:** {display_val}")
 
     # Optional: send to Alpaca
-    st.markdown("#### 🚀 Send Latest Order to Alpaca (Paper)")
+    st.markdown("#### Send Latest Order to Alpaca (Paper)")
     if st.button("Send latest order to Alpaca"):
         if not latest.get("order_side") or not latest.get("order_quantity"):
             st.error("Order side or quantity missing.")
@@ -741,7 +741,7 @@ else:
 # HISTORICAL RUNS TABLE
 # ---------------------------------------------------------
 st.markdown("---")
-st.markdown("## 📜 Historical Runs")
+st.markdown("## Historical Runs")
 
 if df_all.empty:
     st.info("No AutoHedge runs saved yet.")
@@ -774,7 +774,7 @@ else:
 # PRICE CHART FOR SELECTED STOCK
 # ---------------------------------------------------------
 st.markdown("---")
-st.markdown("## 💹 Recent Price")
+st.markdown("## Recent Price")
 
 if not selected_stock or selected_stock == "(none)":
     st.info("Select a stock in the sidebar to see its recent price.")
@@ -792,7 +792,7 @@ else:
 # BACKTEST SECTION
 # ---------------------------------------------------------
 st.markdown("---")
-st.markdown("## 📈 Backtest From AutoHedge Signals")
+st.markdown("## Backtest From AutoHedge Signals")
 
 if df.empty or not selected_stock or selected_stock == "(none)":
     st.info("Need at least one BUY/LONG signal for the selected stock to run a backtest.")
@@ -874,7 +874,7 @@ else:
 # ALPACA ACCOUNT & POSITIONS
 # ---------------------------------------------------------
 st.markdown("---")
-st.markdown("## 📟 Alpaca Account & Positions (Paper)")
+st.markdown("## Alpaca Account & Positions (Paper)")
 
 alp_client = get_alpaca_client()
 if alp_client is None:
@@ -921,7 +921,7 @@ else:
 # RUN NEW AUTOHEDGE ANALYSIS
 # ---------------------------------------------------------
 st.markdown("---")
-st.markdown("## ⚙️ Run New AutoHedge Analysis")
+st.markdown("## Run New AutoHedge Analysis")
 
 with st.form("new_run_form"):
     tickers_input = st.text_input("Tickers (comma-separated)", value="TSLA")
@@ -931,7 +931,7 @@ with st.form("new_run_form"):
     strategy = st.selectbox(
         "Strategy type", ["momentum", "mean-reversion", "trend-following", "value"]
     )
-    risk_level = st.slider("Risk level (1–10)", min_value=1, max_value=10, value=5)
+    risk_level = st.slider("Risk level (1-10)", min_value=1, max_value=10, value=5)
     submitted = st.form_submit_button("Run AutoHedge")
 
 if submitted:
