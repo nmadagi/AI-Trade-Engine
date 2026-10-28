@@ -1,4 +1,5 @@
 import os
+import hmac
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -22,6 +23,7 @@ for key in [
     "APCA_API_KEY_ID",
     "APCA_API_SECRET_KEY",
     "APCA_API_BASE_URL",
+    "OPERATOR_PASSWORD",
 ]:
     try:
         if key in st.secrets and not os.getenv(key):
@@ -32,6 +34,25 @@ for key in [
 
 # Now create the Groq client (env var is set)
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+
+def operator_unlocked() -> bool:
+    """Gate paid and account actions (Groq calls, Alpaca orders, account view).
+
+    Locked unless OPERATOR_PASSWORD is configured AND entered in the sidebar,
+    so a public deployment can show saved runs and backtests without letting
+    visitors spend API credits or trade the paper account.
+    """
+    expected = os.getenv("OPERATOR_PASSWORD", "")
+    if not expected:
+        return False
+    entered = st.sidebar.text_input("Operator password", type="password", key="operator_pw")
+    return bool(entered) and hmac.compare_digest(entered.encode(), expected.encode())
+
+
+def risk_approved(value) -> bool:
+    """True only for a real boolean True (NaN/None/'False' from the runs file are not approval)."""
+    return str(value).strip().lower() == "true"
 
 # Alpaca imports stay the same...
 from alpaca.trading.client import TradingClient
@@ -66,7 +87,15 @@ def alpaca_place_market_order(symbol: str, side: str, qty: float):
     if client is None:
         raise RuntimeError("Alpaca API keys not set.")
 
-    side_enum = OrderSide.BUY if side.upper() in ["BUY", "LONG"] else OrderSide.SELL
+    side_u = str(side).strip().upper()
+    if side_u in ("BUY", "LONG"):
+        side_enum = OrderSide.BUY
+    elif side_u in ("SELL", "SHORT"):
+        side_enum = OrderSide.SELL
+    else:
+        raise ValueError(f"Refusing to send order with side '{side}'.")
+    if not qty or float(qty) <= 0:
+        raise ValueError("Refusing to send order with non-positive quantity.")
 
     order_req = MarketOrderRequest(
         symbol=symbol,
@@ -588,6 +617,9 @@ This app lets you:
 df_all = load_runs()
 
 # ---------------- Sidebar Filters ----------------
+OPERATOR = operator_unlocked()
+if not OPERATOR:
+    st.sidebar.caption("Public demo: AI runs and Alpaca actions are locked.")
 st.sidebar.header("Filters")
 
 selected_stock = None
@@ -720,15 +752,20 @@ else:
 
     # Optional: send to Alpaca
     st.markdown("#### Send Latest Order to Alpaca (Paper)")
-    if st.button("Send latest order to Alpaca"):
-        if not latest.get("order_side") or not latest.get("order_quantity"):
+    if not OPERATOR:
+        st.info("Disabled on the public demo: enter the operator password in the sidebar.")
+    elif st.button("Send latest order to Alpaca"):
+        order_symbol = latest.get("current_stock")
+        if not risk_approved(latest.get("custom_risk_approved")):
+            st.error(f"Blocked by custom risk rules: {latest.get('custom_risk_reason', 'not approved')}")
+        elif not latest.get("order_side") or not latest.get("order_quantity"):
             st.error("Order side or quantity missing.")
-        elif not selected_stock or selected_stock == "(none)":
-            st.error("Select a stock in the sidebar first.")
+        elif not order_symbol:
+            st.error("Latest run has no stock symbol.")
         else:
             try:
                 placed = alpaca_place_market_order(
-                    symbol=selected_stock,
+                    symbol=str(order_symbol),
                     side=str(latest["order_side"]),
                     qty=float(latest["order_quantity"]),
                 )
@@ -876,8 +913,10 @@ else:
 st.markdown("---")
 st.markdown("## Alpaca Account & Positions (Paper)")
 
-alp_client = get_alpaca_client()
-if alp_client is None:
+alp_client = get_alpaca_client() if OPERATOR else None
+if not OPERATOR:
+    st.info("Disabled on the public demo: enter the operator password in the sidebar.")
+elif alp_client is None:
     st.info(
         "Alpaca API keys not set or .env not loaded. "
         "Set APCA_API_KEY_ID and APCA_API_SECRET_KEY to see account/positions."
@@ -936,8 +975,12 @@ with st.form("new_run_form"):
 
 if submitted:
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
-    if not tickers:
+    if not OPERATOR:
+        st.error("Disabled on the public demo: enter the operator password in the sidebar.")
+    elif not tickers:
         st.error("Please provide at least one valid ticker.")
+    elif len(tickers) > 3:
+        st.error("At most 3 tickers per run.")
     else:
         with st.spinner("Running AutoHedge..."):
             try:

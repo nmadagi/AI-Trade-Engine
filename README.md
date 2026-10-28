@@ -51,7 +51,14 @@ GROQ_API_KEY=your_groq_key
 APCA_API_KEY_ID=your_alpaca_key
 APCA_API_SECRET_KEY=your_alpaca_secret
 APCA_API_BASE_URL=https://paper-api.alpaca.markets
+OPERATOR_PASSWORD=choose_a_password   # unlocks AI runs and Alpaca actions
 ```
+
+Running AI analyses, sending orders, and viewing the Alpaca account all require
+the operator password, entered in the sidebar. If `OPERATOR_PASSWORD` is not set,
+those actions stay locked, which is the intended state for a public deployment:
+visitors can browse saved runs and backtests but cannot spend API credits or
+trade the paper account. On Streamlit Cloud, put these keys in the app's Secrets.
 
 ### 4. Run the dashboard
 
